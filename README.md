@@ -11,6 +11,22 @@ hardware and a particular point-in-time vLLM build. It does **not** ship binarie
 > Scope: cluster + build + serve only. Any request-routing / proxy / failover / monitoring layer you
 > put in front of the engine is intentionally out of scope.
 
+## Why this exists
+
+I spent weeks trying to get DeepSeek-V4-Flash running *stably* at long context on this hardware —
+many vLLM builds and commits, MTP on and off, FP8 and other quantizations, context lengths from
+128 K to 1 M, `--gpu-memory-utilization` and `--max-num-seqs` sweeps, and driver/firmware updates.
+
+The recurring wall was a **GSP firmware hard-lock under sustained long-context load** — it barely
+cared which recipe I used, and newer drivers/firmware did not make it disappear. I chased it to the
+bottom: it is a **hardware/firmware-level lockup (NVIDIA GB10 / sm_121, tracked as #1111), not a
+vLLM setting you can tune away.** What actually held, what didn't, and the practical escapes
+(shorter context, capped concurrency, an external power-cycle watchdog) are written down honestly in
+[`docs/known-issues.md`](docs/known-issues.md).
+
+I'm publishing the whole thing — the build, the serve recipe, and above all the **landmines** — so
+you don't have to burn the same weeks rediscovering them.
+
 ## Why this is non-trivial
 
 - **GB10 is sm_121** — stock vLLM 0.23 will not load DeepSeek-V4-Flash on it; you need the sm12x

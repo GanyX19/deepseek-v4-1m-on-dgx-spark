@@ -2,8 +2,8 @@
 # DeepSeek-V4-Flash · 1 M context · TP=2 across two GB10 nodes.
 #
 # This shows the `vllm serve` invocation + environment + the drop-caches trick.
-# Multi-node TP=2 itself is driven by your cluster launcher (vLLM multi-node / Ray):
-# run this serve command on the HEAD node with the WORKER joined to the same TP group.
+# Multi-node TP=2 is orchestrated by launch/launch-cluster.sh (included in this repo);
+# this file is the serve command it runs on the head node. See ../INSTALL.md for the full flow.
 #
 # Fill HEAD_IP / WORKER_IP / VLLM_IMAGE via .env (see ../.env.example).
 set -euo pipefail

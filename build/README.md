@@ -39,21 +39,25 @@ RUN pip install --no-cache-dir "torch==<X.Y.Z>" --index-url https://download.pyt
 
 (Match the torch/CUDA versions to your GB10 driver stack.)
 
-## Build (sketch)
+## Build
 
-This repo does not republish a full internal build harness. The essential steps:
+This directory contains the real (scrubbed) build tooling:
+
+- **`build-and-copy.sh`** — builds the sm_121 vLLM image and copies it to both nodes.
+- **`Dockerfile`** — the multi-stage build (FlashInfer → vLLM → runner) with both gotchas baked in.
+- **`autodiscover.sh`** — detects your nodes / NICs (sourced by `build-and-copy.sh`; configure via `.env`).
+- **`flashinfer_cache.patch`** — a small FlashInfer caching patch applied during the build.
 
 ```bash
-# 1. Build the vLLM wheel/image from the PR head, for the GB10 arch.
-#    Key build args: TORCH_CUDA_ARCH_LIST=12.1a  FLASHINFER_CUDA_ARCH_LIST=12.1a
-#    and the PR-head checkout from gotcha #1.
-#
-# 2. Copy the resulting image to BOTH nodes (the TP=2 cluster needs it on each).
-#    e.g. docker save <img> | ssh $WORKER_IP "docker load"
+cd build
+# builds for GB10 (arch 12.1a), applies PR #41834 via the PR-head checkout, copies the image to the worker
+./build-and-copy.sh --tag vllm-gb10-dsv4 --vllm-ref main --apply-vllm-pr 41834 --rebuild-vllm -c <worker_ip>
 ```
 
-A minimal Dockerfile that clones vLLM, checks out the PR head, sets the GB10 arch, builds, and
-re-pins CUDA torch is all that's required — the two gotchas above are the only non-obvious parts.
+`--apply-vllm-pr 41834` triggers the PR-head checkout (gotcha #1); the GB10 arch and the torch
+re-pin (gotcha #2) live in the `Dockerfile`. A build is ~10 min once dependency wheels are cached.
+Run `./build-and-copy.sh --help` for all flags. See [`../INSTALL.md`](../INSTALL.md) for the
+end-to-end flow.
 
 ## Notes
 
