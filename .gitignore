@@ -1,0 +1,28 @@
+# secrets / local config — never commit
+.env
+*.env
+secrets/
+*.key
+*.pem
+id_*
+
+# build artifacts / weights — do not redistribute
+*.whl
+*.tar
+*.tar.gz
+wheels/
+images/
+models/
+*.safetensors
+
+# local results / logs
+results/
+*.log
+/tmp/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+__pycache__/
+*.pyc

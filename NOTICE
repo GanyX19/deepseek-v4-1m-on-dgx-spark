@@ -1,0 +1,20 @@
+DeepSeek-V4-Flash on DGX Spark (GB10) — serving recipe
+Copyright 2026 the repository authors.
+
+Licensed under the Apache License, Version 2.0 (the "LICENSE" file).
+
+This work is a configuration/recipe layer on top of, and credits, the following:
+
+- vLLM (https://github.com/vllm-project/vllm) — Apache License 2.0.
+- vLLM PR #41834, "Add SM12x support for DeepSeek V4 Flash" (jasl fork, branch
+  codex/ds4-sm120-min-enable) — contributed under vLLM's Apache-2.0 license.
+  The sm12x enablement / DeepSeek-V4 parsers used here come from that PR.
+- DeepSeek-V4-Flash model — by DeepSeek; obtain and use under its own model license.
+  No model weights are distributed by this repository.
+
+This repository distributes NO binaries, NO CUDA components, and NO model weights.
+NVIDIA CUDA and related libraries are NOT redistributed here; you build the image
+yourself and obtain CUDA from NVIDIA under NVIDIA's terms.
+
+NVIDIA, DGX, Grace Blackwell, GB10 are trademarks of NVIDIA Corporation. This project
+is not affiliated with or endorsed by NVIDIA, the vLLM project, or DeepSeek.
