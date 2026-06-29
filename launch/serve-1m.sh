@@ -27,7 +27,7 @@ exec env \
     --served-model-name deepseek-v4 --trust-remote-code \
     --tensor-parallel-size 2 --host 0.0.0.0 --port 8000 \
     --max-model-len 1000000 --max-num-seqs 6 --max-num-batched-tokens 8192 \
-    --gpu-memory-utilization 0.83 --kv-cache-dtype fp8 --block-size 256 \
+    --gpu-memory-utilization "${GPU_MEM_UTIL:-0.80}" --kv-cache-dtype fp8 --block-size 256 \
     --load-format instanttensor \
     --speculative-config '{"method":"mtp","num_speculative_tokens":2}' \
     --enable-auto-tool-choice --tool-call-parser deepseek_v4 \
@@ -41,7 +41,7 @@ exec env \
 # Flags worth understanding (see ../docs/):
 #   --max-model-len 1000000   1 M context; needs VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 #   --max-num-seqs 6          KV-bound at 1 M (each seq reserves a lot of KV) → low concurrency cap
-#   --gpu-memory-utilization 0.83  conservative: UMA is shared, do NOT use 0.9 on a non-clean node
+#   --gpu-memory-utilization "${GPU_MEM_UTIL:-0.80}"  conservative: UMA is shared, do NOT use 0.9 on a non-clean node
 #   --kv-cache-dtype fp8 --block-size 256   smaller KV footprint
 #   --speculative-config mtp/2   MTP speculative decoding (~+50% single-stream); see known-issues for the crash history
 #   --tokenizer/--tool-call/--reasoning-parser deepseek_v4   DS4-specific parsers (provided by the sm12x build)

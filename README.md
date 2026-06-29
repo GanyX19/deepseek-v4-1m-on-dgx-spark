@@ -33,12 +33,16 @@ you don't have to burn the same weeks rediscovering them.
   enablement from an upstream PR (see [`build/`](build/README.md)).
 - **Unified memory (UMA)** — there is no separate VRAM pool; the model, KV cache, CUDA graphs and
   every co-located process share the same ~120 GB. `--gpu-memory-utilization` and page-cache
-  behaviour matter a lot (see [`docs/hardware-bringup.md`](docs/hardware-bringup.md)).
+  behaviour matter a lot: too high a util **silently hard-freezes the host** after a while (no
+  traceback, no kernel OOM line), so the serve scripts default to a headroom-leaving **0.78** and
+  honour `GPU_MEM_UTIL` to override. See [`docs/hardware-bringup.md`](docs/hardware-bringup.md) and
+  [`docs/known-issues.md`](docs/known-issues.md) #3.
 - **Two nodes, tensor-parallel** — TP=2 over a RoCEv2 (CX7) link, with a known post-reboot GID-index
   quirk.
-- **Known firmware/driver foot-guns** — a GSP hard-lock under sustained 1 M load, an MTP
-  speculative-decoding crash mode, Marlin-MoE lock-ups — all documented in
-  [`docs/known-issues.md`](docs/known-issues.md) so you don't rediscover them the hard way.
+- **Known firmware/driver foot-guns** — a GSP hard-lock under sustained 1 M load, a silent UMA-OOM
+  hard-freeze when util is set too high, an MTP speculative-decoding crash mode, Marlin-MoE lock-ups
+  — all documented in [`docs/known-issues.md`](docs/known-issues.md) so you don't rediscover them the
+  hard way.
 
 ## Layout
 
@@ -73,6 +77,12 @@ curl -s http://localhost:8000/v1/models | jq .
 1 M context forces a low `--max-num-seqs` (each sequence reserves a lot of KV), which caps aggregate
 throughput. Pick the config that matches your workload. Details + measurement method in
 [`docs/benchmark-results.md`](docs/benchmark-results.md).
+
+> The aggregate numbers above were measured at a throughput-peak `--gpu-memory-utilization` (0.85).
+> The serve scripts now default to **0.78** for stable sustained operation, which trades a little
+> aggregate throughput (smaller KV pool) for not silently freezing the host — see
+> [`docs/known-issues.md`](docs/known-issues.md) #3. Push util back up with `GPU_MEM_UTIL` only on a
+> clean, dedicated, monitored node.
 
 ## Licensing
 

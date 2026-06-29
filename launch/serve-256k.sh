@@ -20,7 +20,7 @@ exec env \
     --served-model-name deepseek-v4 --trust-remote-code \
     --tensor-parallel-size 2 --host 0.0.0.0 --port 8000 \
     --max-model-len 262144 --max-num-seqs 24 --max-num-batched-tokens 6144 \
-    --gpu-memory-utilization 0.85 --kv-cache-dtype fp8 --block-size 256 \
+    --gpu-memory-utilization "${GPU_MEM_UTIL:-0.78}" --kv-cache-dtype fp8 --block-size 256 \
     --load-format instanttensor \
     --speculative-config '{"method":"mtp","num_speculative_tokens":2}' \
     --enable-auto-tool-choice --tool-call-parser deepseek_v4 \
@@ -30,3 +30,10 @@ exec env \
 
 # --max-num-seqs: aggregate throughput peaked around 24 in our tests; ~32 regressed
 # (scheduler/KV pressure). Sweep it for your workload.
+
+# --gpu-memory-utilization: default 0.78 leaves ~15 GB of the ~120 GB UMA free, which we found
+# REQUIRED for stable sustained operation. 0.85 maximizes the KV pool / aggregate throughput but
+# left only ~7 GB free and crept into a silent UMA-OOM host hard-freeze after ~1 h even under light
+# (~1 req/min) load — see docs/known-issues.md #3. Override GPU_MEM_UTIL=0.85 only on a clean,
+# dedicated, monitored node. The weights (~74.5 GB/node) are fixed; util controls the KV pool — and
+# note: lowering --max-num-seqs does NOT reduce this baseline UMA, only runtime concurrency spikes.

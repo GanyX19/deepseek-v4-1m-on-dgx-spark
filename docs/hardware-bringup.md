@@ -15,10 +15,21 @@
 GB10 has **no separate VRAM**. Weights, KV cache, CUDA graphs, *and every other process on the box*
 share the same ~120 GB pool. Consequences:
 
-- **`--gpu-memory-utilization` must be conservative.** If anything else runs on the node (other
-  services, sidecars), they eat into the same budget. We run **0.83 at 1 M / 0.85 at 256 K**, not
-  the 0.9 you might use on a clean discrete GPU. vLLM's own free-memory check will refuse to start
-  if the budget is short.
+- **`--gpu-memory-utilization` must leave real headroom.** If anything else runs on the node (other
+  services, sidecars) **or you serve for hours**, the shared pool gets eaten — and on GB10 that ends
+  in a **silent host hard-freeze**, not a clean error (see [`known-issues.md`](known-issues.md) #3).
+  vLLM's start-time free-memory check only catches a *static* shortfall; the dangerous case is a slow
+  *creep* at run time. Budget for it:
+  - Weights are fixed (~74.5 GB/node for DeepSeek-V4-Flash FP8 @ TP=2); **util sizes the KV pool**, so
+    a small util change moves the free-memory floor a lot.
+  - **Target ≥ ~12–15 GB free.** Default to **`--gpu-memory-utilization 0.78`** (≈15 GB free) for
+    stable sustained serving. 0.85 (≈7 GB free) maximizes the KV pool / throughput but froze us after
+    ~1 h even at light load. The serve scripts default to 0.78 and honour `GPU_MEM_UTIL` to override.
+  - **`--max-num-seqs` does NOT change this baseline** — the KV pool fills the util budget regardless
+    of the seqs cap; seqs only bounds runtime concurrency spikes. Use util/context for headroom.
+- **Watch the headroom, don't just log it.** A silent hard-freeze leaves nothing to post-mortem, so
+  alert *while* free UMA creeps down. [`monitoring/uma-headroom-check.sh`](../monitoring/uma-headroom-check.sh)
+  is a minimal `free`-based check you can wire to your own alerting (and step util down when it fires).
 - **The page cache competes for the pool.** Loading ~149 GB of weights fills the Linux page cache,
   which can push the free-memory check over the edge mid-load. Fix: a **privileged drop-caches
   sidecar** (`sync; echo 3 > /proc/sys/vm/drop_caches` in a loop) on **both** nodes during load,

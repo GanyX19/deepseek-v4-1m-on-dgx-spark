@@ -27,11 +27,40 @@ dies (connection-refused, *no* OOM/Xid). For us this fired ~twice a day in produ
 build, **disable MTP**. Validate with the MTP crash test in
 [`benchmark-results.md`](benchmark-results.md#validation-gates).
 
-## 3. UMA-OOM host hang under parallel benchmark load  ·  [MEDIUM]
+## 3. UMA-OOM host hard-freeze — even under light, sustained load  ·  [HIGH]
 
-Hammering the engine with **high parallel load while other things run** can drive the unified-memory
-pool to OOM and **hang the host**. Run benchmarks **sequentially or at modest concurrency**, and
-keep `--gpu-memory-utilization` honest (see [`hardware-bringup.md`](hardware-bringup.md)).
+The unified-memory pool (model + KV + CUDA graphs + page cache + uvm fragmentation) can fill up and
+**hard-freeze the whole host**. Two ways in:
+
+- **Parallel benchmark load** — hammering the engine while other things run drives UMA to OOM fast.
+- **Sustained normal operation at too-high `--gpu-memory-utilization`** — this is the one that bit us
+  in production, and the reason it is now HIGH. At **util 0.85 / 256 K** the box ran with only ~7 GB
+  of ~120 GB free, then crept into OOM and froze after **~1 h under light (~1 req/min) load**. It is
+  *not* only a benchmark problem — a too-aggressive util will freeze a quiet box given enough time.
+
+**The freeze is SILENT** — plan your observability around that. No vLLM traceback, no kernel
+`NV_ERR_NO_MEMORY` line (the host locks up before anything flushes, even with a persistent journal).
+The only signatures you get:
+- the **other** TP rank logs `ProcessGroupNCCL ... HeartbeatMonitor ... TCPStore server has shut
+  down` (rank-0 vanished), and
+- the head node goes to **"no route to host"** (SSH dies).
+
+So don't wait for a clean error — treat "rank lost / no route to host" as a UMA freeze.
+
+**Mitigations:**
+- **Leave headroom.** Default to `--gpu-memory-utilization 0.78` (~15 GB free) for stable sustained
+  serving, not 0.85. The serve scripts here default to 0.78 and accept `GPU_MEM_UTIL` to override. The
+  model weights (~74.5 GB/node) are fixed; util only sizes the KV pool. If you still freeze, **step
+  down: 0.78 → 0.74 → 0.70 → 0.66**. Floor ≈ 0.65 for 256 K (below it the KV pool can't hold one
+  full-context sequence → vLLM refuses to start); past that, reduce `--max-model-len` (256 K → 128 K)
+  instead of dropping util further.
+- **`--max-num-seqs` does NOT help here.** Lowering it reduces runtime concurrency spikes but **not**
+  the baseline reserved UMA — the KV pool fills the util budget regardless of the seqs cap. Use
+  util / context for headroom, not seqs.
+- **Alert *before* the freeze.** Post-mortem logs are useless against a silent hard-freeze — watch
+  free UMA and alert while it creeps. See
+  [`monitoring/uma-headroom-check.sh`](../monitoring/uma-headroom-check.sh).
+- **Run benchmarks sequentially / at modest concurrency.**
 
 ## 4. Marlin WNA16-MoE hangs on GB10  ·  [MEDIUM]
 
