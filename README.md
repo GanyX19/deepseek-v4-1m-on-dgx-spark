@@ -40,16 +40,18 @@ you don't have to burn the same weeks rediscovering them.
 - **Two nodes, tensor-parallel** — TP=2 over a RoCEv2 (CX7) link, with a known post-reboot GID-index
   quirk.
 - **Known firmware/driver foot-guns** — a GSP hard-lock under sustained 1 M load, a silent UMA-OOM
-  hard-freeze when util is set too high, an MTP speculative-decoding crash mode, Marlin-MoE lock-ups
-  — all documented in [`docs/known-issues.md`](docs/known-issues.md) so you don't rediscover them the
-  hard way.
+  hard-freeze that turned out to be a **UCX RDMA-cache leak** (fixed by two env vars — the single most
+  important finding here), an MTP speculative-decoding crash mode, Marlin-MoE lock-ups — all
+  documented in [`docs/known-issues.md`](docs/known-issues.md) so you don't rediscover them the hard
+  way. **If you run multi-node TP=2, read [known-issues #3](docs/known-issues.md) before anything
+  else.**
 
 ## Layout
 
 | Path | What |
 |---|---|
 | [`build/`](build/README.md) | How to build the sm_121 vLLM image (PR ref, the "checkout-not-merge" trick, the torch-pin gotcha). |
-| [`launch/`](launch/) | `vllm serve` templates: `serve-1m.sh` (1 M context) and `serve-256k.sh` (higher aggregate throughput). |
+| [`launch/`](launch/) | `vllm serve` templates: `serve-256k.sh` (max throughput), `serve-512k.sh` (middle ground), `serve-1m.sh` (max context). All three set the **UCX leak-fix** env vars. |
 | [`docs/hardware-bringup.md`](docs/hardware-bringup.md) | Prereqs, UMA, RoCE/NCCL, the GID-index fix, the drop-caches trick. |
 | [`docs/known-issues.md`](docs/known-issues.md) | The foot-guns + workarounds. |
 | [`docs/benchmark-results.md`](docs/benchmark-results.md) | Single-stream & aggregate throughput, quality numbers, the context↔throughput trade-off, the validation gates. |
@@ -71,11 +73,18 @@ curl -s http://localhost:8000/v1/models | jq .
 
 | Config | Single-stream | Aggregate (saturated) | seqs cap |
 |---|---|---|---|
-| 1 M context | ~37 tok/s | ~100 tok/s | 6 |
 | 256 K context | ~40 tok/s | ~150 tok/s | 24 |
+| 512 K context | ~40 tok/s | ~130 tok/s¹ | 12–16 |
+| 1 M context | ~37 tok/s | ~100 tok/s | 6 |
 
-1 M context forces a low `--max-num-seqs` (each sequence reserves a lot of KV), which caps aggregate
-throughput. Pick the config that matches your workload. Details + measurement method in
+A larger context forces a lower `--max-num-seqs` (each sequence reserves more KV), which caps
+aggregate throughput and concurrency — so **pick the smallest window that covers your requests** for
+the most parallel users. ¹512 K aggregate is interpolated (boot + serving verified; not separately
+benchmarked). With the UCX leak fixed ([known-issues #3](docs/known-issues.md)) the choice is now
+purely this context-vs-concurrency trade-off — **not** a stability question. Note `--max-num-seqs` is
+a *ceiling*, not a forced load: a lone request runs at full speed regardless; the cap only shapes
+behaviour once you actually hit that many concurrent requests (high cap = no queuing/low TTFT under
+load; low cap = guaranteed per-request speed but queuing). Method in
 [`docs/benchmark-results.md`](docs/benchmark-results.md).
 
 > The aggregate numbers above were measured at a throughput-peak `--gpu-memory-utilization` (0.85).

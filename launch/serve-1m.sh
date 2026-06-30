@@ -23,6 +23,7 @@ exec env \
   TILELANG_CLEANUP_TEMP_FILES=1 \
   VLLM_TRITON_MLA_SPARSE=1 VLLM_TRITON_MLA_SPARSE_HEAD_BLOCK_SIZE=4 \
   VLLM_USE_B12X_MOE=1 VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 VLLM_SPARSE_INDEXER_MAX_LOGITS_MB=256 \
+  UCX_MEM_MMAP_HOOK_MODE=none UCX_RCACHE_MAX_UNRELEASED=1024 \
   vllm serve deepseek-ai/DeepSeek-V4-Flash \
     --served-model-name deepseek-v4 --trust-remote-code \
     --tensor-parallel-size 2 --host 0.0.0.0 --port 8000 \

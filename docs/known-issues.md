@@ -2,20 +2,25 @@
 
 Hard-won; documented so you don't pay for them twice. Severity is for a production serving setup.
 
-## 1. GSP firmware hard-lock under sustained 1 M load  ·  [HIGH]
+## 1. "1 M GSP firmware hard-lock" — mostly the UCX leak (#3), re-evaluated  ·  [HIGH]
 
-Under **sustained, zero-gap load at 1 M context**, the box can **hard-lock the host** (GSP firmware
-lockup; tracked upstream around NVIDIA GB10/sm_121 GSP issues). It is **driver-independent** — newer
-drivers + firmware did not eliminate it in our testing. Symptoms: the whole node stops responding,
-not just the engine.
+Under **sustained load at 1 M context** we used to see the box **hard-lock the host** — the whole
+node stops responding, not just the engine. It looked like a GSP firmware lockup and we filed it as
+driver/firmware (newer drivers/firmware didn't eliminate it).
+
+**Re-interpretation (2026-06):** most of this was almost certainly the **UCX registration-cache leak
+(#3)**, not firmware. 1 M context has the **tightest UMA headroom** of any config, so the same
+per-request UCX leak fills it **fastest** and freezes **soonest** — which reads exactly like a
+"1 M-only" firmware lock. After applying the UCX fix (#3), **both 1 M and 512 K boot and serve
+cleanly** on our 2× GB10 (1 M: KV pool 1.43 M tokens, util 0.80, ~8 GB free; 512 K: 1.18 M tokens,
+~7 GB free).
 
 **Mitigations:**
-- Run **256 K** instead of 1 M if you push sustained saturation — we did not reproduce the freeze
-  there.
-- If you must run 1 M, put an **external watchdog with a hard power-cycle** in front (out of scope
-  for this repo) and treat a freeze as expected-but-rare.
-- Our 1 M build survived a **30-minute** zero-gap soak cleanly (0 Xid), but **>12 h is unproven** —
-  do your own long-soak before trusting 1 M under continuous saturation.
+- **Apply the UCX fix (#3) first** — it is very likely the actual cause; then re-test 1 M.
+- Any genuine firmware portion is now **unproven and probably rarer than this entry implied**. We
+  have not run a **>12 h** sustained-saturation 1 M soak *with the UCX fix* yet — do your own long
+  soak before trusting 1 M under continuous saturation, and keep an external watchdog + the
+  clean-crash hardening (#3) as a backstop.
 
 ## 2. MTP speculative-decoding crash on older vLLM  ·  [HIGH]
 
@@ -27,40 +32,48 @@ dies (connection-refused, *no* OOM/Xid). For us this fired ~twice a day in produ
 build, **disable MTP**. Validate with the MTP crash test in
 [`benchmark-results.md`](benchmark-results.md#validation-gates).
 
-## 3. UMA-OOM host hard-freeze — even under light, sustained load  ·  [HIGH]
+## 3. Gradual UMA-OOM host hard-freeze — the UCX RDMA-cache leak  ·  [HIGH]
 
-The unified-memory pool (model + KV + CUDA graphs + page cache + uvm fragmentation) can fill up and
-**hard-freeze the whole host**. Two ways in:
+**Root cause (found 2026-06):** a **per-request GPU/unified-memory leak (~14 MB/request under load),
+freed only on container restart**, that fills the unified-memory pool until the host **silently
+hard-freezes**. The leak is in **UCX** — the inter-node RDMA transport that multi-node TP=2 uses
+(under NCCL) to move tensors between the two GB10 nodes every step. UCX hooks **every `mmap`** to
+maintain its memory-registration cache, and with `UCX_RCACHE_MAX_UNRELEASED=inf` (the default) the
+unreleased-region queue grows **unbounded, per request**, on the shared UMA pool → OOM → freeze.
+Same mechanism as Mistral's vLLM-memory-leak writeup; it just lands harder here because GPU and host
+RAM are one physical pool.
 
-- **Parallel benchmark load** — hammering the engine while other things run drives UMA to OOM fast.
-- **Sustained normal operation at too-high `--gpu-memory-utilization`** — this is the one that bit us
-  in production, and the reason it is now HIGH. At **util 0.85 / 256 K** the box ran with only ~7 GB
-  of ~120 GB free, then crept into OOM and froze after **~1 h under light (~1 req/min) load**. It is
-  *not* only a benchmark problem — a too-aggressive util will freeze a quiet box given enough time.
+**THE FIX — two env vars** (now set in `launch/serve-*.sh`):
+```
+UCX_MEM_MMAP_HOOK_MODE=none      # stop UCX intercepting mmap for its rcache
+UCX_RCACHE_MAX_UNRELEASED=1024   # bound the unreleased-region queue
+```
+A/B-proven on our box (256 K, 5 concurrent, varied request shapes): **without** the vars, free UMA
+fell 10 → 6 GB and OOM-aborted in ~18 min (~14 MB/request); **with** them, the slope is flat (no
+abort, same load). This is the actual fix — not a util tweak.
 
-**The freeze is SILENT** — plan your observability around that. No vLLM traceback, no kernel
-`NV_ERR_NO_MEMORY` line (the host locks up before anything flushes, even with a persistent journal).
-The only signatures you get:
+**The freeze is SILENT** — plan observability around it. No vLLM traceback, no kernel
+`NV_ERR_NO_MEMORY` line (the host locks up before anything flushes). The only signatures:
 - the **other** TP rank logs `ProcessGroupNCCL ... HeartbeatMonitor ... TCPStore server has shut
-  down` (rank-0 vanished), and
+  down` (rank-0's host died), and
 - the head node goes to **"no route to host"** (SSH dies).
 
 So don't wait for a clean error — treat "rank lost / no route to host" as a UMA freeze.
 
-**Mitigations:**
-- **Leave headroom.** Default to `--gpu-memory-utilization 0.78` (~15 GB free) for stable sustained
-  serving, not 0.85. The serve scripts here default to 0.78 and accept `GPU_MEM_UTIL` to override. The
-  model weights (~74.5 GB/node) are fixed; util only sizes the KV pool. If you still freeze, **step
-  down: 0.78 → 0.74 → 0.70 → 0.66**. Floor ≈ 0.65 for 256 K (below it the KV pool can't hold one
-  full-context sequence → vLLM refuses to start); past that, reduce `--max-model-len` (256 K → 128 K)
-  instead of dropping util further.
-- **`--max-num-seqs` does NOT help here.** Lowering it reduces runtime concurrency spikes but **not**
-  the baseline reserved UMA — the KV pool fills the util budget regardless of the seqs cap. Use
-  util / context for headroom, not seqs.
-- **Alert *before* the freeze.** Post-mortem logs are useless against a silent hard-freeze — watch
-  free UMA and alert while it creeps. See
-  [`monitoring/uma-headroom-check.sh`](../monitoring/uma-headroom-check.sh).
-- **Run benchmarks sequentially / at modest concurrency.**
+**About `--gpu-memory-utilization`:** lowering util used to look like the fix — it isn't. More util
+headroom just gives the leak more room to eat, **delaying** the freeze, never stopping it (we chased
+0.85 → 0.74 for a week before finding UCX). With the UCX fix above, util is bounded **only** by the
+per-node UMA headroom your runtime working set needs — not by a leak. On GB10 we measured: **0.85
+leaves only ~1 GB free/node** (too tight — a load burst OOMs the working set); **~0.80–0.82 is the
+practical max** (≈8–13 GB free). Note `--max-num-seqs` does **not** change this baseline reservation.
+
+**Belt-and-suspenders (recommended regardless):** make a UMA-OOM **recoverable** instead of a host
+wedge. Set `sysctl vm.min_free_kbytes=3145728` (≈3 GB reserve) and `swapoff -a` on each node, so that
+if the pool is ever exhausted the kernel **OOM-kills the process cleanly** (your watchdog relaunches
+it) instead of starving itself into a freeze. NVIDIA acknowledges the UMA-OOM-host-wedge as a known
+GB10 issue (better OOM handling promised in a future Spark OS). Also: **alert before** the freeze —
+watch free UMA (see [`monitoring/uma-headroom-check.sh`](../monitoring/uma-headroom-check.sh)) — and
+run benchmarks at modest concurrency.
 
 ## 4. Marlin WNA16-MoE hangs on GB10  ·  [MEDIUM]
 
