@@ -42,3 +42,10 @@ exec env \
 # --gpu-memory-utilization 0.80: util is bounded by per-node UMA headroom, NOT by a leak (fixed). At
 # 1 M/512 K the KV pool is util-driven (~1.2–1.4 M tokens); the smaller window just yields a higher
 # "Maximum concurrency Nx". The weights (~74.5 GB/node) are fixed.
+#
+# Production status: this 512 K / util 0.80 / seqs 16 config is what we run in LIVE PRODUCTION on
+# 2x GB10 — stable, no leak (UCX fix #3), KV pool ~1.18 M tokens, ~7 GB idle headroom per node.
+# util 0.80 is the proven production point: headroom is tight by design (util is UMA-bounded), so we
+# run 0.80 (not 0.82) and keep the UMA monitor (monitoring/uma-headroom-check.sh) as the standard
+# guardrail. Load bursts narrow the idle headroom (we see ~7 GB -> ~4 GB) but the clean-crash reserve
+# (#3) plus the monitor keep that safe. 0.82/clean-node stays an optional headroom-permitting bump.

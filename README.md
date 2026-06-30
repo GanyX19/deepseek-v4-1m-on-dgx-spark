@@ -32,11 +32,11 @@ you don't have to burn the same weeks rediscovering them.
 - **GB10 is sm_121** — stock vLLM 0.23 will not load DeepSeek-V4-Flash on it; you need the sm12x
   enablement from an upstream PR (see [`build/`](build/README.md)).
 - **Unified memory (UMA)** — there is no separate VRAM pool; the model, KV cache, CUDA graphs and
-  every co-located process share the same ~120 GB. `--gpu-memory-utilization` and page-cache
-  behaviour matter a lot: too high a util **silently hard-freezes the host** after a while (no
-  traceback, no kernel OOM line), so the serve scripts default to a headroom-leaving **0.78** and
-  honour `GPU_MEM_UTIL` to override. See [`docs/hardware-bringup.md`](docs/hardware-bringup.md) and
-  [`docs/known-issues.md`](docs/known-issues.md) #3.
+  every co-located process share the same ~120 GB. `--gpu-memory-utilization` sizes the KV pool out
+  of that shared budget. A per-request UCX leak used to **silently hard-freeze the host** over time
+  (no traceback, no kernel OOM line) — fixed (see [`docs/known-issues.md`](docs/known-issues.md) #3);
+  with the leak gone, util is bounded only by per-node UMA headroom, and the serve scripts default to
+  a stable **0.80** (honour `GPU_MEM_UTIL` to override). See [`docs/hardware-bringup.md`](docs/hardware-bringup.md).
 - **Two nodes, tensor-parallel** — TP=2 over a RoCEv2 (CX7) link, with a known post-reboot GID-index
   quirk.
 - **Known firmware/driver foot-guns** — a GSP hard-lock under sustained 1 M load, a silent UMA-OOM
@@ -88,10 +88,12 @@ load; low cap = guaranteed per-request speed but queuing). Method in
 [`docs/benchmark-results.md`](docs/benchmark-results.md).
 
 > The aggregate numbers above were measured at a throughput-peak `--gpu-memory-utilization` (0.85).
-> The serve scripts now default to **0.78** for stable sustained operation, which trades a little
-> aggregate throughput (smaller KV pool) for not silently freezing the host — see
-> [`docs/known-issues.md`](docs/known-issues.md) #3. Push util back up with `GPU_MEM_UTIL` only on a
-> clean, dedicated, monitored node.
+> The serve scripts default to **0.80** — our stable live-production point on 2× GB10. The host
+> freezes that used to force a lower util were the UCX registration-cache leak (see
+> [`docs/known-issues.md`](docs/known-issues.md) #3), **not util itself**; with that fixed, util is
+> bounded only by per-node UMA headroom. 0.80 holds a stable ~7 GB idle headroom and runs in
+> production 24/7 with the UMA monitor as guardrail; push higher with `GPU_MEM_UTIL` (e.g. 0.82) only
+> on a clean, dedicated, monitored node.
 
 ## Licensing
 

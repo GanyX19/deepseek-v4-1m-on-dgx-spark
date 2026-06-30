@@ -22,9 +22,12 @@ share the same ~120 GB pool. Consequences:
   *creep* at run time. Budget for it:
   - Weights are fixed (~74.5 GB/node for DeepSeek-V4-Flash FP8 @ TP=2); **util sizes the KV pool**, so
     a small util change moves the free-memory floor a lot.
-  - **Target ≥ ~12–15 GB free.** Default to **`--gpu-memory-utilization 0.78`** (≈15 GB free) for
-    stable sustained serving. 0.85 (≈7 GB free) maximizes the KV pool / throughput but froze us after
-    ~1 h even at light load. The serve scripts default to 0.78 and honour `GPU_MEM_UTIL` to override.
+  - With the UCX leak fixed (#3) the free-memory floor is **static, not creeping** — size util to your
+    context's steady headroom, not to a leak buffer. The serve scripts default to
+    **`--gpu-memory-utilization 0.80`**, our stable production point (~7–8 GB free at 512 K; more at
+    256 K / smaller windows). 0.85 maximizes the KV pool but used to freeze the host after ~1 h even at
+    light load — that was the leak (#3), not util itself; still leave clear headroom on a co-located or
+    un-monitored node, and prefer a conservative util for first bring-up until you trust the node.
   - **`--max-num-seqs` does NOT change this baseline** — the KV pool fills the util budget regardless
     of the seqs cap; seqs only bounds runtime concurrency spikes. Use util/context for headroom.
 - **Watch the headroom, don't just log it.** A silent hard-freeze leaves nothing to post-mortem, so
